@@ -1,1 +1,1677 @@
-# CachorrinHub
+--[[
+    ═══════════════════════════════════
+       CACHORRIN HUB | Cachorrin Hub v2
+       Stealth Mode — Anti-Hyperion
+    ═══════════════════════════════════
+]]
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local CoreGui = game:GetService("CoreGui")
+local MarketplaceService = game:GetService("MarketplaceService")
+
+local localPlayer = Players.LocalPlayer
+local HUB = "CACHORRIN:"
+
+-- ══════════════════════════════════════
+--  🛡️ PROTEÇÃO SIMPLES
+-- ══════════════════════════════════════
+local _pcall = pcall
+local _warn = warn or print
+
+-- ══════════════════════════════════════
+--  🖼️ IMAGENS
+-- ══════════════════════════════════════
+local IMG_LOGO  = "rbxassetid://95184527630499"
+local IMG_FUNDO = "rbxassetid://95184527630499"
+
+local gameIconUrl = "rbxthumb://type=GameIcon&id=" .. tostring(game.PlaceId) .. "&w=150&h=150"
+local gameIconFallback = "https://www.roblox.com/asset-thumbnail/image?assetId=" .. tostring(game.PlaceId) .. "&width=150&height=150&format=png"
+
+-- ══════════════════════════════════════
+--  🛡️ STEALTH
+-- ══════════════════════════════════════
+local function esperaHumana(base)
+    base = base or 0.2
+    task.wait(base * (0.7 + math.random() * 0.6))
+end
+
+-- ══════════════════════════════════════
+--  CFG do motor
+-- ══════════════════════════════════════
+local CFG = {
+    SpeedCap = 1.15, HopRatio = 1.515, HopMin = 40,
+    HopGap = 0.06, HopGapMin = 0.06, HopGapMax = 0.2, HopRetries = 6,
+    HopLift = 42, LandOffset = 14, LandSettle = 0.08, DropDelay = 0.05,
+    GrabInterval = 0.03, RegrabFar = 40, Height = 70, ClimbShare = 0.5,
+    CarryRatio = 0.9, EasyRatio = 1.3,
+}
+
+local function fpsOn() end
+local function fpsOff() end
+
+-- ══════════════════════════════════════
+--  HANDLES DO JOGO
+-- ══════════════════════════════════════
+local function safeRequire(getter)
+    local ok, result = pcall(function() return require(getter()) end)
+    return ok and result or nil
+end
+
+local networkingFolder = nil
+pcall(function()
+    local pkg = ReplicatedStorage:FindFirstChild("Packages")
+    pkg = pkg and pkg:FindFirstChild("Networking")
+    networkingFolder = pkg
+end)
+
+local EggState = safeRequire(function() return ReplicatedStorage.Client.EggState end)
+local Assets = safeRequire(function() return ReplicatedStorage.Data.Assets end)
+local Mutations = safeRequire(function() return ReplicatedStorage.Shared.Modules.Mutations end)
+
+local function remote(name)
+    if not networkingFolder then return nil end
+    return networkingFolder:FindFirstChild(name)
+end
+
+local function root()
+    local character = localPlayer.Character
+    return character and character:FindFirstChild("HumanoidRootPart")
+end
+
+-- ══════════════════════════════════════
+--  SHIELD
+-- ══════════════════════════════════════
+local shield = { Original = nil, Clone = nil, Links = {}, Connection = nil, Added = nil }
+
+local function walkSpeed()
+    local character = localPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    local speed = humanoid and humanoid.WalkSpeed or 16
+    if shield.Original and shield.Original.Health > 0 then
+        speed = math.min(speed, shield.Original.WalkSpeed)
+    end
+    local ok, result = pcall(function()
+        local stat = localPlayer:FindFirstChild("leaderstats")
+        stat = stat and stat:FindFirstChild("Speed")
+        local util = require(ReplicatedStorage.Shared.Util.TreadmillUtil)
+        return stat and util.SpeedPowerToWalkSpeed(stat.Value) or nil
+    end)
+    if ok and type(result) == "number" and result > 0 then speed = math.min(speed, result) end
+    return speed
+end
+
+local function shieldControls(humanoid)
+    pcall(function()
+        local scripts = localPlayer:FindFirstChild("PlayerScripts")
+        local module = scripts and scripts:FindFirstChild("PlayerModule")
+        if module then
+            local controls = require(module):GetControls()
+            if type(controls) == "table" then controls.humanoid = humanoid end
+        end
+    end)
+end
+
+local function shieldAnimate(character)
+    local animate = character and character:FindFirstChild("Animate")
+    if animate and animate:IsA("LocalScript") then
+        task.spawn(function()
+            animate.Enabled = false
+            task.wait()
+            animate.Enabled = true
+        end)
+    end
+end
+
+local function shieldUnlink()
+    for _, link in ipairs(shield.Links) do pcall(function() link:Disconnect() end) end
+    table.clear(shield.Links)
+end
+
+local groundedStates = {
+    [Enum.HumanoidStateType.Running] = true,
+    [Enum.HumanoidStateType.RunningNoPhysics] = true,
+    [Enum.HumanoidStateType.Landed] = true,
+}
+local function grounded(humanoid)
+    if not humanoid or humanoid.Health <= 0 or humanoid.FloorMaterial == Enum.Material.Air then return false end
+    return groundedStates[humanoid:GetState()] == true
+end
+
+local function shieldSwap()
+    local character = localPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then return end
+    if shield.Clone and shield.Clone.Parent == character then return end
+    if not grounded(humanoid) then return end
+    local clone = humanoid:Clone()
+    humanoid.Parent = nil
+    clone.Parent = character
+    workspace.CurrentCamera.CameraSubject = clone
+    shieldControls(clone)
+    shieldAnimate(character)
+    shield.Original = humanoid
+    shield.Clone = clone
+    table.insert(shield.Links, humanoid:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
+        if clone.Parent ~= nil then clone.WalkSpeed = humanoid.WalkSpeed end
+    end))
+    local animator = humanoid:FindFirstChildOfClass("Animator")
+    local animator2 = clone:FindFirstChildOfClass("Animator")
+    if animator and animator2 then
+        table.insert(shield.Links, animator.AnimationPlayed:Connect(function(played)
+            local animation = played.Animation
+            if not animation or clone.Parent == nil then return end
+            local ok, track = pcall(function() return animator2:LoadAnimation(animation) end)
+            if not ok or not track then return end
+            pcall(function()
+                track.Priority = played.Priority
+                track.Looped = played.Looped
+                track:Play(0.05, math.max(played.WeightTarget, 0.01), played.Speed)
+            end)
+            local stopped
+            stopped = played.Stopped:Connect(function()
+                stopped:Disconnect()
+                pcall(function() track:Stop(0.1) end)
+            end)
+        end))
+    end
+    table.insert(shield.Links, clone.Died:Connect(function()
+        shieldUnlink()
+        shield.Original, shield.Clone = nil, nil
+        local current = localPlayer.Character
+        if current and humanoid.Parent == nil then
+            humanoid.Parent = current
+            workspace.CurrentCamera.CameraSubject = humanoid
+            shieldControls(humanoid)
+        end
+        pcall(function() clone:Destroy() end)
+        humanoid.Health = 0
+    end))
+end
+
+local function shieldUndo()
+    shieldUnlink()
+    local character = localPlayer.Character
+    local original, clone = shield.Original, shield.Clone
+    shield.Original, shield.Clone = nil, nil
+    if original and clone and character and original.Parent == nil and clone.Parent == character then
+        original.Parent = character
+        workspace.CurrentCamera.CameraSubject = original
+        shieldControls(original)
+        pcall(function() clone:Destroy() end)
+        shieldAnimate(character)
+    end
+end
+
+local function shieldStart()
+    shieldSwap()
+    local n = 0
+    shield.Connection = RunService.Heartbeat:Connect(function(dt)
+        n += dt
+        local character = localPlayer.Character
+        local missing = not (shield.Clone and character and shield.Clone.Parent == character)
+        if (missing and 0.25 or 3) <= n then n = 0; shieldSwap() end
+    end)
+    shield.Added = localPlayer.CharacterAdded:Connect(function(character)
+        shieldUnlink()
+        shield.Original, shield.Clone = nil, nil
+        task.spawn(function()
+            character:WaitForChild("Humanoid", 10)
+            task.wait(1)
+            if shield.Connection and localPlayer.Character == character then shieldSwap() end
+        end)
+    end)
+end
+
+local function shieldStop()
+    if shield.Connection then shield.Connection:Disconnect(); shield.Connection = nil end
+    if shield.Added then shield.Added:Disconnect(); shield.Added = nil end
+    shieldUndo()
+end
+
+-- ══════════════════════════════════════
+--  STATE
+-- ══════════════════════════════════════
+local state = {
+    Carrying = false, Uid = nil, Delivered = 0, Busy = false,
+    Cancel = false, Mult = 1, PulledAt = 0, HeldSeen = 0, GuessedDrop = false,
+}
+
+pcall(function()
+    if type(EggState) == "table" and type(EggState.CarryChanged) == "table" and type(EggState.CarryChanged.Connect) == "function" then
+        EggState.CarryChanged:Connect(function(arg)
+            local carrying = type(arg) == "table" and arg.IsCarrying == true
+            if carrying and arg.GuardDisabled == true then carrying = false end
+            state.GuessedDrop = false
+            if carrying then state.HeldSeen = os.clock() end
+            if carrying and type(arg.Uid) == "string" then
+                state.Uid = arg.Uid
+                local mult = tonumber(arg.SpeedMultiplier)
+                if mult and mult > 0 then state.Mult = mult end
+            end
+            state.Carrying = carrying
+        end)
+    end
+end)
+
+pcall(function()
+    local r = remote("RE/EggWorld/FieldEggRedeemVerdict")
+    if r and r.OnClientEvent then
+        r.OnClientEvent:Connect(function()
+            state.Delivered = os.clock()
+        end)
+    end
+end)
+
+pcall(function()
+    local r = remote("RE/RigSync/Refresh")
+    if r and r.OnClientEvent then
+        r.OnClientEvent:Connect(function(arg)
+            if type(arg) == "table" and arg.Action == "Relocate" then
+                state.PulledAt = os.clock()
+            end
+        end)
+    end
+end)
+
+local function takeEgg(uid)
+    if type(uid) == "string" and type(EggState) == "table" and type(EggState.CarryFieldEgg) == "function" then
+        pcall(EggState.CarryFieldEgg, uid)
+    end
+end
+
+local function dropEgg()
+    if type(EggState) == "table" and type(EggState.DropFieldEgg) == "function" then
+        pcall(EggState.DropFieldEgg, "PlayerRequest")
+    end
+end
+
+local function promptNear(position, radius)
+    local best, bestDistance = nil, radius
+    for _, child in ipairs(workspace:GetChildren()) do
+        if child.Name == "SmartPromptPart" and child:IsA("BasePart") then
+            local prompt = child:FindFirstChild("CarryAreaEgg")
+            if prompt and prompt:IsA("ProximityPrompt") then
+                local distance = (child.Position - position).Magnitude
+                if distance < bestDistance then best, bestDistance = prompt, distance end
+            end
+        end
+    end
+    return best
+end
+
+local function heldByMe(uid)
+    local character = localPlayer.Character
+    if type(uid) ~= "string" or not character then return false end
+    local egg = workspace:FindFirstChild(uid)
+    if not egg then return false end
+    for _, d in ipairs(egg:GetDescendants()) do
+        if d:IsA("WeldConstraint") or d:IsA("JointInstance") then
+            local ok, a, b = pcall(function() return d.Part0, d.Part1 end)
+            if ok and ((a and a:IsDescendantOf(character)) or (b and b:IsDescendantOf(character))) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+task.spawn(function()
+    while true do
+        task.wait(0.2)
+        if not state.Carrying then
+            if state.GuessedDrop and heldByMe(state.Uid) then
+                state.GuessedDrop, state.Carrying, state.HeldSeen = false, true, os.clock()
+            end
+        elseif heldByMe(state.Uid) then
+            state.HeldSeen = os.clock()
+        elseif os.clock() - state.HeldSeen > 0.8 then
+            state.Carrying, state.GuessedDrop = false, true
+        end
+    end
+end)
+
+local function snapshot()
+    local list = {}
+    local r = remote("RF/EggWorld/AskFieldEggSnapshot")
+    if not r then return list end
+    local ok, result = pcall(function()
+        return r:InvokeServer()
+    end)
+    local records = ok and type(result) == "table" and result.Records or nil
+    if type(records) ~= "table" then return list end
+    for _, record in pairs(records) do
+        if type(record) == "table" and type(record.Uid) == "string" and (record.State == "Slot" or record.State == "Dropped") and typeof(record.BottomCFrame) == "CFrame" then
+            list[#list + 1] = record
+        end
+    end
+    return list
+end
+
+local function eggPosition(uid)
+    for _, record in ipairs(snapshot()) do
+        if record.Uid == uid then return record.BottomCFrame.Position end
+    end
+    return nil
+end
+
+local function describe(record)
+    local directory = type(Assets) == "table" and Assets.Directory or nil
+    local entry = type(directory) == "table" and directory[tostring(record.AssetCategory)] or nil
+    local info = { Uid = record.Uid, Category = tostring(record.AssetCategory), Name = tostring(record.AssetCategory), Icon = "", Rarity = 0, Value = 0 }
+    if type(entry) == "table" then
+        info.Name = tostring(entry.DisplayName or record.AssetCategory)
+        local icon = entry.Icon
+        if icon ~= nil and tostring(icon) ~= "" then
+            icon = tostring(icon)
+            info.Icon = tonumber(icon) and ("rbxassetid://" .. icon) or icon
+        end
+        if type(entry.Rarity) == "table" then
+            info.Rarity = tonumber(entry.Rarity.RarityNumber or entry.Rarity.Rank) or 0
+        end
+        local scale = tonumber(record.AssetScale) or 1
+        local factor = scale > 5 and (scale / 5) ^ 1.2 * 19.637875755794113 or scale ^ 1.85
+        local mutation = 1
+        if type(Mutations) == "table" and type(Mutations.EarningsFor) == "function" then
+            local okM, resM = pcall(Mutations.EarningsFor, type(record.Mutations) == "table" and record.Mutations or {})
+            if okM and type(resM) == "number" then mutation = resM end
+        end
+        info.Value = (tonumber(entry.EarningRate) or 0) * factor * mutation
+    end
+    return info
+end
+
+local function money(value)
+    local units = { { 1e12, "T" }, { 1e9, "B" }, { 1e6, "M" }, { 1e3, "K" } }
+    for _, u in ipairs(units) do
+        if value >= u[1] then return string.format("$%.2f%s/s", value / u[1], u[2]) end
+    end
+    return string.format("$%d/s", math.floor(value + 0.5))
+end
+
+-- ══════════════════════════════════════
+--  INSTANT TP
+-- ══════════════════════════════════════
+local status = function(text) end
+
+local function frozenCamera()
+    local camera = workspace.CurrentCamera
+    if not camera then return function() end end
+    local oldType = camera.CameraType
+    local frame = camera.CFrame
+    pcall(function()
+        camera.CameraType = Enum.CameraType.Scriptable
+        camera.CFrame = frame
+    end)
+    return function() pcall(function() camera.CameraType = oldType end) end
+end
+
+local stealClone = nil
+local function dropClone()
+    local copy = stealClone
+    stealClone = nil
+    if copy then pcall(function() copy:Destroy() end) end
+end
+
+local function postClone()
+    dropClone()
+    local character = localPlayer.Character
+    if not character then return end
+    local was = character.Archivable
+    character.Archivable = true
+    local copy = character:Clone()
+    character.Archivable = was
+    if copy then
+        for _, d in ipairs(copy:GetDescendants()) do
+            if d:IsA("LuaSourceContainer") or d:IsA("Humanoid") then
+                pcall(function() d:Destroy() end)
+            elseif d:IsA("BasePart") then
+                d.Anchored = true
+                d.CanCollide = false
+                d.CanTouch = false
+                d.CanQuery = false
+            end
+        end
+        copy.Name = "Clone"
+        copy.Parent = workspace
+        stealClone = copy
+    end
+end
+
+local function lineInfo()
+    local world = workspace:FindFirstChild("World") or workspace:FindFirstChild("__OBJECTS")
+    world = world and world:FindFirstChild("Areas")
+    world = world and world:FindFirstChild("SeparationLine")
+    local ok = world and world:IsA("BasePart")
+    return ok and world.Position.X or 552.2, ok and world.Position.Y or 67.67
+end
+
+local function homePoint()
+    for _, def in ipairs({
+        { { "GearGiver_Slap", "Podium" }, Vector3.new(-16.415, 21.072, -6.106) },
+        { { "World", "Machines", "RiftMachine", "Rift", "Meshes/VoidPortal_Cube.003" }, Vector3.new(-26.776, 1.75, 18.665) },
+        { { "__OBJECTS", "Machines", "RiftMachine", "Rift", "Meshes/VoidPortal_Cube.003" }, Vector3.new(-26.776, 1.75, 18.665) },
+    }) do
+        local node = workspace
+        for _, name in ipairs(def[1]) do node = node and node:FindFirstChild(name) or nil end
+        if node and node:IsA("BasePart") then
+            return node.CFrame:PointToWorldSpace(def[2])
+        end
+    end
+    return Vector3.new(528.7, 70.57, -364.11)
+end
+
+local function place(position)
+    local r = root()
+    if not r then return end
+    pcall(function()
+        r.CFrame = CFrame.new(position) * CFrame.Angles(0, math.rad(90), 0)
+        r.AssemblyLinearVelocity = Vector3.zero
+        r.AssemblyAngularVelocity = Vector3.zero
+    end)
+end
+
+local dangerCache, dangerAt = {}, 0
+local function dangers()
+    if os.clock() - dangerAt < 1 then return dangerCache end
+    dangerAt = os.clock()
+    local list = {}
+    local function add(inst)
+        local ok, cf, size = pcall(function()
+            if inst:IsA("Model") then return inst:GetBoundingBox()
+            elseif inst:IsA("BasePart") then return inst.CFrame, inst.Size end
+        end)
+        if ok and cf and size then
+            local half = Vector3.new(math.abs(size.X), 0, math.abs(size.Z)) * 0.5
+            local rot = (cf - cf.Position):VectorToWorldSpace(half)
+            local rx = math.max(math.abs(rot.X), half.X, half.Z)
+            local rz = math.max(math.abs(rot.Z), half.X, half.Z)
+            list[#list + 1] = { MinX = cf.Position.X - rx, MaxX = cf.Position.X + rx, MinZ = cf.Position.Z - rz, MaxZ = cf.Position.Z + rz }
+        end
+    end
+    local function bad(name)
+        if name == "ScrambleLocalVisuals" or name == "DrScrambleEvent" then return false end
+        name = string.lower(name)
+        return string.find(name, "portal", 1, true) or string.find(name, "teleport", 1, true) or string.find(name, "mech", 1, true) or string.find(name, "arena", 1, true) or string.find(name, "scramble", 1, true)
+    end
+    for _, child in ipairs(workspace:GetChildren()) do
+        if (child:IsA("Model") or child:IsA("BasePart") or child:IsA("Folder")) and bad(child.Name) then
+            if child:IsA("Folder") then for _, inner in ipairs(child:GetChildren()) do add(inner) end
+            else add(child) end
+        end
+    end
+    local build = workspace:FindFirstChild("World")
+    build = build and build:FindFirstChild("Build")
+    if build then
+        for _, child in ipairs(build:GetChildren()) do
+            if bad(child.Name) then for _, inner in ipairs(child:GetChildren()) do add(inner) end end
+        end
+    end
+    dangerCache = list
+    return list
+end
+
+local function avoid(from, to)
+    for _, d in ipairs(dangers()) do
+        local x0, x1, z0, z1 = d.MinX - 12, d.MaxX + 12, d.MinZ - 12, d.MaxZ + 12
+        local inside = from.X >= x0 and from.X <= x1 and from.Z >= z0 and from.Z <= z1
+        if not inside then
+            local t0, t1, hit = 0, 1, true
+            for _, axis in ipairs({ { from.X, to.X - from.X, x0, x1 }, { from.Z, to.Z - from.Z, z0, z1 } }) do
+                local pos, delta, lo, hi = axis[1], axis[2], axis[3], axis[4]
+                if math.abs(delta) < 1e-6 then
+                    if pos < lo or pos > hi then hit = false end
+                else
+                    local ta, tb = (lo - pos) / delta, (hi - pos) / delta
+                    if ta > tb then ta, tb = tb, ta end
+                    t0, t1 = math.max(t0, ta), math.min(t1, tb)
+                    if t0 > t1 then hit = false end
+                end
+            end
+            if hit then
+                local zLow, zHigh = z0 - 2, z1 + 2
+                local z = math.abs(from.Z - zLow) <= math.abs(from.Z - zHigh) and zLow or zHigh
+                if z < -440 or z > -290 then z = z == zLow and zHigh or zLow end
+                local x = math.abs(from.X - x0) <= math.abs(from.X - x1) and x0 or x1
+                if math.abs(from.Z - z) < 3 then x = math.abs(to.X - x0) <= math.abs(to.X - x1) and x0 or x1 end
+                return Vector3.new(x, to.Y, z)
+            end
+        end
+    end
+    return to
+end
+
+local function runToEgg(uid, egg)
+    local lineX = lineInfo()
+    local home = homePoint()
+    local character = localPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        humanoid.PlatformStand = false
+        if character:FindFirstChildWhichIsA("Tool") then pcall(function() humanoid:UnequipTools() end) end
+    end
+    local r = root()
+    if not r then return false end
+    local stage = "field"
+    if r.Position.X < lineX - 2 and Vector3.new(r.Position.X - home.X, 0, r.Position.Z - home.Z).Magnitude > 20 then stage = "safe" end
+    local started, lastCheck, lastPos, lastTake = os.clock(), os.clock(), r.Position, 0
+    while os.clock() - started < 120 and not state.Cancel do
+        r = root()
+        if not r then return false end
+        local flatEgg = Vector3.new(egg.X - r.Position.X, 0, egg.Z - r.Position.Z)
+        if stage == "field" and flatEgg.Magnitude <= 2.5 then break end
+        local target = egg
+        if stage == "safe" then
+            if Vector3.new(home.X - r.Position.X, 0, home.Z - r.Position.Z).Magnitude <= 6 then stage = "field"
+            else target = home end
+        end
+        local waypoint = avoid(r.Position, target)
+        local flat = Vector3.new(waypoint.X - r.Position.X, 0, waypoint.Z - r.Position.Z)
+        local unit = flat.Magnitude > 0.01 and flat.Unit or Vector3.zero
+        local speed = math.max(walkSpeed() * CFG.SpeedCap, 8)
+        local v = unit * math.min(speed, flat.Magnitude / 0.05)
+        pcall(function()
+            r.AssemblyLinearVelocity = Vector3.new(v.X, r.AssemblyLinearVelocity.Y, v.Z)
+            if humanoid and unit.Magnitude > 0 then humanoid:Move(unit, false) end
+        end)
+        if os.clock() - lastCheck >= 1.5 then
+            if (r.Position - lastPos).Magnitude < 3 and humanoid and flatEgg.Magnitude > 15 then
+                pcall(function() humanoid.Jump = true end)
+            end
+            lastPos, lastCheck = r.Position, os.clock()
+        end
+        if stage == "field" and flatEgg.Magnitude <= 9 and os.clock() - lastTake > 0.1 then
+            lastTake = os.clock()
+            takeEgg(uid)
+        end
+        RunService.Heartbeat:Wait()
+    end
+    r = root()
+    if r then
+        pcall(function()
+            r.AssemblyLinearVelocity = Vector3.new(0, r.AssemblyLinearVelocity.Y, 0)
+            if humanoid then humanoid:Move(Vector3.zero, false) end
+        end)
+    end
+    return state.Carrying or (r ~= nil and Vector3.new(egg.X - r.Position.X, 0, egg.Z - r.Position.Z).Magnitude <= 6)
+end
+
+local function eggNow(uid, cache)
+    local node = workspace:FindFirstChild(uid)
+    local slots = workspace:FindFirstChild("AreaEggSlotsClient")
+    node = node or (slots and slots:FindFirstChild(uid))
+    if node then
+        local ok, pos = pcall(function() return node:GetPivot().Position end)
+        if ok and pos then cache.Pos, cache.At = pos, os.clock(); return pos end
+    end
+    if os.clock() - cache.At >= 0.5 then
+        cache.At = os.clock()
+        cache.Pos = eggPosition(uid) or cache.Pos
+    end
+    return cache.Pos
+end
+
+local function grab(uid, timeout)
+    local cache = { At = 0 }
+    local waited, since = 0, 1
+    while not state.Carrying and waited < timeout and not state.Cancel do
+        local r = root()
+        local egg = eggNow(uid, cache)
+        local dt = math.max(RunService.Heartbeat:Wait(), 1 / 240)
+        waited += dt
+        since += dt
+        if r and egg then
+            local delta = egg - r.Position
+            if delta.Magnitude > 2 then
+                local pace = math.max(walkSpeed() * CFG.SpeedCap, 16)
+                local v = delta / math.max(0.08, dt)
+                if v.Magnitude > pace then v = v.Unit * pace end
+                pcall(function()
+                    r.AssemblyLinearVelocity = v + Vector3.new(0, workspace.Gravity * dt * 0.5, 0)
+                    r.AssemblyAngularVelocity = Vector3.zero
+                end)
+            end
+            if since >= CFG.GrabInterval then
+                since = 0
+                local prompt = promptNear(egg - Vector3.new(0, 3, 0), 10)
+                if prompt and typeof(fireproximityprompt) == "function" and math.random() < 0.7 then
+                    pcall(function() prompt.HoldDuration = 0 end)
+                    pcall(fireproximityprompt, prompt)
+                end
+                task.spawn(takeEgg, uid)
+            end
+        elseif since >= CFG.GrabInterval then
+            since = 0
+            task.spawn(takeEgg, uid)
+        end
+    end
+    local r = root()
+    if r then pcall(function() r.AssemblyLinearVelocity = Vector3.zero end) end
+    return state.Carrying and state.Uid == uid
+end
+
+local function regrab(uid)
+    if state.Carrying then return true end
+    local r = root()
+    local egg = eggPosition(uid)
+    if r and egg and Vector3.new(r.Position.X - egg.X, 0, r.Position.Z - egg.Z).Magnitude > CFG.RegrabFar then
+        place(egg + Vector3.new(0, 3, 0))
+    end
+    return grab(uid, 3)
+end
+
+local function groundY(position, fallback)
+    local y = fallback
+    pcall(function()
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances = { localPlayer.Character }
+        params.IgnoreWater = true
+        local hit = workspace:Raycast(position + Vector3.new(0, 60, 0), Vector3.new(0, -140, 0), params)
+        if hit and hit.Material ~= Enum.Material.Water and math.abs(hit.Position.Y - fallback) < 40 then
+            y = hit.Position.Y + 3.5
+        end
+    end)
+    return y
+end
+
+local function carrySpeed(distance)
+    local ws = walkSpeed()
+    local base = ws * math.min(CFG.CarryRatio, CFG.SpeedCap) * state.Mult
+    local fast = base * 1.5
+    local excess = 5.5 * base
+    local limit = fast
+    if distance and distance > excess then
+        limit = math.min(fast, base * distance / (distance - excess))
+    end
+    return math.min(math.max(math.min(base * CFG.EasyRatio, limit), base), math.max(ws * CFG.SpeedCap, base))
+end
+
+local function runHome(lineX, laneZ)
+    local started = os.clock()
+    local home = homePoint()
+    local checkpoint = lineX - 7
+    local height = CFG.Height
+    local share = math.clamp(CFG.ClimbShare, 0.1, 0.9)
+    local descent = height * math.sqrt(1 - share * share) / share
+    local character = localPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if humanoid then humanoid.PlatformStand = false end
+    local r = root()
+    if r and character and height > 0.5 and home.Y + height - 2 > r.Position.Y then
+        pcall(function()
+            character:PivotTo(CFrame.new(Vector3.new(r.Position.X, home.Y + height, r.Position.Z)) * r.CFrame.Rotation)
+            r.AssemblyLinearVelocity = Vector3.zero
+            r.AssemblyAngularVelocity = Vector3.zero
+        end)
+    end
+    local start = root()
+    local speed = carrySpeed(start and (Vector3.new(start.Position.X - home.X, 0, start.Position.Z - home.Z).Magnitude + math.max(0, height) * 2) or nil)
+    local last = os.clock()
+    local timeout = 0
+    while state.Carrying and state.Delivered < started and not state.Cancel and timeout < 25 do
+        r = root()
+        if not r then return false end
+        local now = os.clock()
+        local dt = math.max(now - last, 1 / 240)
+        last = now
+        timeout += dt
+        local toHome = r.Position.X <= checkpoint + 2
+        local target = toHome and home or Vector3.new(checkpoint, home.Y, laneZ)
+        if toHome and Vector3.new(home.X - r.Position.X, 0, home.Z - r.Position.Z).Magnitude < 2 then break end
+        local aim = avoid(r.Position, target)
+        local flat = Vector3.new(aim.X - r.Position.X, 0, aim.Z - r.Position.Z)
+        local remaining = toHome and 0 or math.max(0, r.Position.X - checkpoint)
+        local wantY = home.Y + height
+        if toHome or remaining <= descent then
+            wantY = home.Y + height * math.clamp(remaining / math.max(descent, 1), 0, 1)
+        end
+        local vy = math.clamp((wantY - r.Position.Y) / 0.12, -speed * share, speed * share)
+        local horizontal = math.sqrt(math.max(speed * speed - vy * vy, 0))
+        local v = flat.Magnitude > 0.01 and flat.Unit * math.min(horizontal, flat.Magnitude / 0.05) or Vector3.zero
+        pcall(function() r.AssemblyLinearVelocity = Vector3.new(v.X, vy, v.Z) end)
+        RunService.Heartbeat:Wait()
+    end
+    if humanoid then pcall(function() humanoid:Move(Vector3.zero, false) end) end
+    local settle = 0
+    while settle < 2 and state.Delivered < started and state.Carrying and not state.Cancel do
+        settle += RunService.Heartbeat:Wait()
+    end
+    if state.Carrying and state.Delivered < started and not state.Cancel then
+        esperaHumana(0.2)
+        dropEgg()
+        local waited = 0
+        while state.Delivered < started and waited < 1 do waited += RunService.Heartbeat:Wait() end
+    end
+    return state.Delivered >= started
+end
+
+local function instantTP(uid)
+    local started = os.clock()
+    local lineX, lineY = lineInfo()
+    local r = root()
+    if not r then return false end
+    local laneZ = math.clamp(r.Position.Z, -425, -300)
+    local landing = Vector3.new(lineX + CFG.LandOffset, lineY + 3.35, laneZ)
+    local hopStep = math.max(walkSpeed() * CFG.HopRatio, CFG.HopMin)
+    local hopY = r.Position.Y + CFG.HopLift
+    local x = r.Position.X
+    local retries = 0
+    local releaseCamera = frozenCamera()
+    state.ReleaseCamera = releaseCamera
+    pcall(postClone)
+    fpsOn()
+    while x - hopStep > landing.X and not state.Cancel do
+        if not state.Carrying then
+            if not regrab(uid) then break end
+            local current = root()
+            if current then x = math.min(x, current.Position.X) end
+            continue
+        end
+        local nextX = x - hopStep
+        local pulledBefore = state.PulledAt
+        local held = 0
+        while held < CFG.HopGap do place(Vector3.new(nextX, hopY, laneZ)); held += RunService.Heartbeat:Wait() end
+        local check = root()
+        local pulled = state.PulledAt > pulledBefore or (check ~= nil and (check.Position.X - nextX > 10 or check.AssemblyLinearVelocity.Magnitude > 150))
+        if pulled and state.Carrying and not state.Cancel then
+            retries += 1
+            CFG.HopGap = math.min(CFG.HopGapMax, CFG.HopGap + 0.02)
+            if retries > CFG.HopRetries then break end
+            local settle = 0
+            while settle < 0.12 and not state.Cancel do place(Vector3.new(x, hopY, laneZ)); settle += RunService.Heartbeat:Wait() end
+        else
+            x = nextX
+            CFG.HopGap = math.max(CFG.HopGapMin, CFG.HopGap - 0.01)
+        end
+    end
+    landing = Vector3.new(landing.X, groundY(landing, landing.Y), landing.Z)
+    local function land()
+        local current = root()
+        if current and current.Position.X <= landing.X + 1 and current.Position.Y > landing.Y - 25 then
+            pcall(function() current.AssemblyLinearVelocity = Vector3.zero end)
+            return
+        end
+        place(landing)
+    end
+    land()
+    for attempt = 1, 3 do
+        local settle = 0
+        while settle < CFG.LandSettle and not state.Cancel do settle += RunService.Heartbeat:Wait() end
+        local landed = root()
+        if state.Carrying and landed and (landed.Position.X - landing.X > 12 or landed.Position.Y < landing.Y - 25) then land()
+        else break end
+    end
+    dropClone()
+    if state.Carrying and not state.Cancel then
+        local delay = 0
+        while delay < CFG.DropDelay do delay += RunService.Heartbeat:Wait() end
+        dropEgg()
+        local waited = 0
+        while state.Carrying and waited < 1 and not state.Cancel do waited += RunService.Heartbeat:Wait() end
+        local current = root()
+        if current then
+            pcall(function()
+                current.AssemblyLinearVelocity = Vector3.zero
+                current.AssemblyAngularVelocity = Vector3.zero
+            end)
+        end
+        releaseCamera()
+        dropClone()
+        if not grab(uid, 3) and not regrab(uid) then fpsOff(); return false end
+        dropClone()
+    end
+    releaseCamera()
+    local ok = false
+    if state.Carrying then ok = runHome(lineX, laneZ) end
+    fpsOff()
+    return ok or state.Delivered >= started
+end
+
+local function stealAndDeliver(uid)
+    if state.Busy then return end
+    state.Busy = true
+    state.Cancel = false
+    task.spawn(function()
+        local ok, err = pcall(function()
+            local egg = eggPosition(uid)
+            if not egg then return end
+            if state.Carrying and state.Uid ~= uid then
+                dropEgg()
+                local waited = 0
+                while state.Carrying and waited < 1 do waited += RunService.Heartbeat:Wait() end
+            end
+            fpsOn()
+            if not runToEgg(uid, egg) then fpsOff(); return end
+            if not grab(uid, 4) then fpsOff(); return end
+            instantTP(uid)
+        end)
+        fpsOff()
+        dropClone()
+        if state.ReleaseCamera then pcall(state.ReleaseCamera); state.ReleaseCamera = nil end
+        state.Busy = false
+    end)
+end
+
+-- ══════════════════════════════════════
+--  VISUAL
+-- ══════════════════════════════════════
+local V = {
+    fundo = Color3.fromRGB(10, 10, 14), fundoAlpha = 0.4,
+    card = Color3.fromRGB(20, 20, 26), cardAlpha = 0.4,
+    cardHover = Color3.fromRGB(30, 30, 38),
+    borda = Color3.fromRGB(42, 42, 55),
+    acento = Color3.fromRGB(120, 90, 255),
+    acentoBright = Color3.fromRGB(155, 130, 255),
+    acentoDark = Color3.fromRGB(60, 40, 140),
+    texto = Color3.fromRGB(245, 245, 252),
+    fraco = Color3.fromRGB(120, 120, 145),
+    vermelho = Color3.fromRGB(240, 90, 100),
+    verde = Color3.fromRGB(70, 220, 140),
+    verdeDark = Color3.fromRGB(30, 130, 80),
+    amarelo = Color3.fromRGB(255, 200, 80),
+    fonte = Enum.Font.GothamMedium,
+    fonteBold = Enum.Font.GothamBold,
+    fonteBlack = Enum.Font.GothamBold,
+}
+
+local RARITY_COLORS = {
+    Color3.fromRGB(190, 190, 190), Color3.fromRGB(110, 210, 110),
+    Color3.fromRGB(90, 160, 255), Color3.fromRGB(190, 110, 255),
+    Color3.fromRGB(255, 170, 50), Color3.fromRGB(255, 80, 80),
+    Color3.fromRGB(255, 90, 200), Color3.fromRGB(80, 235, 235),
+}
+
+local RARITY_NAMES = { "Comum", "Incomum", "Raro", "Épico", "Lendário", "Mítico", "Secreto", "Divino" }
+
+-- ══════════════════════════════════════
+--  UI
+-- ══════════════════════════════════════
+local function criarUI()
+    if CoreGui:FindFirstChild("CACHORRIN_UI") then CoreGui.CACHORRIN_UI:Destroy() end
+
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "CACHORRIN_UI"
+    gui.ResetOnSpawn = false
+    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    gui.IgnoreGuiInset = true
+    gui.Parent = CoreGui
+
+    local main = Instance.new("Frame")
+    main.Size = UDim2.fromOffset(480, 320)
+    main.Position = UDim2.new(0, 14, 0.5, -160)
+    main.BackgroundColor3 = V.fundo
+    main.BackgroundTransparency = V.fundoAlpha
+    main.BorderSizePixel = 0
+    main.Active = true
+    main.Draggable = true
+    main.ClipsDescendants = true
+    main.Parent = gui
+    Instance.new("UICorner", main).CornerRadius = UDim.new(0, 18)
+
+    local fundoImg = Instance.new("ImageLabel")
+    fundoImg.Size = UDim2.new(1, 0, 1, 0)
+    fundoImg.BackgroundTransparency = 1
+    fundoImg.Image = IMG_FUNDO
+    fundoImg.ScaleType = Enum.ScaleType.Crop
+    fundoImg.ZIndex = 0
+    fundoImg.Parent = main
+    Instance.new("UICorner", fundoImg).CornerRadius = UDim.new(0, 18)
+
+    local overlay = Instance.new("Frame")
+    overlay.Size = UDim2.new(1, 0, 1, 0)
+    overlay.BackgroundColor3 = Color3.fromRGB(10, 10, 14)
+    overlay.BackgroundTransparency = 0.5
+    overlay.BorderSizePixel = 0
+    overlay.ZIndex = 1
+    overlay.Parent = main
+    Instance.new("UICorner", overlay).CornerRadius = UDim.new(0, 18)
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = V.borda
+    stroke.Thickness = 1.2
+    stroke.Transparency = 0.15
+    stroke.Parent = main
+    local strokeGrad = Instance.new("UIGradient")
+    strokeGrad.Color = ColorSequence.new{
+        ColorSequenceKeypoint.new(0, V.acentoBright),
+        ColorSequenceKeypoint.new(0.5, V.acento),
+        ColorSequenceKeypoint.new(1, V.acentoDark)
+    }
+    strokeGrad.Rotation = 45
+    strokeGrad.Parent = stroke
+
+    local shine = Instance.new("Frame")
+    shine.Size = UDim2.new(1, -50, 0, 1)
+    shine.Position = UDim2.new(0, 25, 0, 0)
+    shine.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    shine.BackgroundTransparency = 0.6
+    shine.BorderSizePixel = 0
+    shine.ZIndex = 10
+    shine.Parent = main
+
+    local header = Instance.new("Frame")
+    header.Size = UDim2.new(1, 0, 0, 50)
+    header.BackgroundTransparency = 1
+    header.ZIndex = 5
+    header.Parent = main
+
+    local logoImg = Instance.new("ImageLabel")
+    logoImg.Size = UDim2.fromOffset(34, 34)
+    logoImg.Position = UDim2.new(0, 12, 0.5, -17)
+    logoImg.BackgroundTransparency = 1
+    logoImg.Image = IMG_LOGO
+    logoImg.ScaleType = Enum.ScaleType.Fit
+    logoImg.ZIndex = 6
+    logoImg.Parent = header
+    Instance.new("UICorner", logoImg).CornerRadius = UDim.new(0, 9)
+
+    local titulo = Instance.new("TextLabel")
+    titulo.Size = UDim2.new(1, -90, 0, 15)
+    titulo.Position = UDim2.new(0, 56, 0, 12)
+    titulo.BackgroundTransparency = 1
+    titulo.Text = "CACHORRIN HUB"
+    titulo.TextColor3 = V.texto
+    titulo.Font = V.fonteBlack
+    titulo.TextSize = 11
+    titulo.TextXAlignment = Enum.TextXAlignment.Left
+    titulo.ZIndex = 6
+    titulo.Parent = header
+
+    local sub = Instance.new("TextLabel")
+    sub.Size = UDim2.new(1, -90, 0, 11)
+    sub.Position = UDim2.new(0, 56, 0, 29)
+    sub.BackgroundTransparency = 1
+    sub.Text = "Cachorrin Hub"
+    sub.TextColor3 = V.acentoBright
+    sub.Font = V.fonte
+    sub.TextSize = 9
+    sub.TextXAlignment = Enum.TextXAlignment.Left
+    sub.ZIndex = 6
+    sub.Parent = header
+
+    local fechar = Instance.new("TextButton")
+    fechar.Size = UDim2.fromOffset(24, 24)
+    fechar.Position = UDim2.new(1, -32, 0.5, -12)
+    fechar.BackgroundColor3 = Color3.fromRGB(28, 28, 36)
+    fechar.BackgroundTransparency = 0.4
+    fechar.Text = "X"
+    fechar.TextColor3 = V.fraco
+    fechar.Font = Enum.Font.GothamBold
+    fechar.TextSize = 11
+    fechar.AutoButtonColor = false
+    fechar.ZIndex = 6
+    fechar.Parent = header
+    Instance.new("UICorner", fechar).CornerRadius = UDim.new(0, 8)
+
+    fechar.MouseEnter:Connect(function()
+        TweenService:Create(fechar, TweenInfo.new(0.15), { BackgroundColor3 = V.vermelho, BackgroundTransparency = 0.1, TextColor3 = Color3.new(1,1,1) }):Play()
+    end)
+    fechar.MouseLeave:Connect(function()
+        TweenService:Create(fechar, TweenInfo.new(0.15), { BackgroundColor3 = Color3.fromRGB(28,28,36), BackgroundTransparency = 0.4, TextColor3 = V.fraco }):Play()
+    end)
+    fechar.MouseButton1Click:Connect(function() gui:Destroy() end)
+
+    local div = Instance.new("Frame")
+    div.Size = UDim2.new(1, -26, 0, 1)
+    div.Position = UDim2.new(0, 13, 0, 50)
+    div.BackgroundColor3 = V.borda
+    div.BackgroundTransparency = 0.3
+    div.BorderSizePixel = 0
+    div.ZIndex = 6
+    div.Parent = main
+
+    local abasContainer = Instance.new("Frame")
+    abasContainer.Size = UDim2.new(0, 110, 1, -70)
+    abasContainer.Position = UDim2.new(0, 13, 0, 60)
+    abasContainer.BackgroundTransparency = 1
+    abasContainer.ZIndex = 6
+    abasContainer.Parent = main
+
+    local conteudo = Instance.new("Frame")
+    conteudo.Size = UDim2.new(1, -136, 1, -70)
+    conteudo.Position = UDim2.new(0, 130, 0, 60)
+    conteudo.BackgroundColor3 = V.card
+    conteudo.BackgroundTransparency = V.cardAlpha
+    conteudo.BorderSizePixel = 0
+    conteudo.ZIndex = 6
+    conteudo.Parent = main
+    Instance.new("UICorner", conteudo).CornerRadius = UDim.new(0, 12)
+
+    local conteudoStroke = Instance.new("UIStroke")
+    conteudoStroke.Color = V.borda
+    conteudoStroke.Thickness = 1
+    conteudoStroke.Transparency = 0.5
+    conteudoStroke.Parent = conteudo
+
+    local abas = {}
+    local abaAtiva = nil
+    local paginas = {}
+
+    local function criarPagina(nome)
+        local pag = Instance.new("Frame")
+        pag.Size = UDim2.new(1, -16, 1, -16)
+        pag.Position = UDim2.new(0, 8, 0, 8)
+        pag.BackgroundTransparency = 1
+        pag.ZIndex = 7
+        pag.Visible = false
+        pag.Parent = conteudo
+        return pag
+    end
+
+    local function trocarAba(nome)
+        if abaAtiva == nome then return end
+        abaAtiva = nome
+        for n, btn in pairs(abas) do
+            local ativo = (n == nome)
+            local corFundo = ativo and V.acento or V.card
+            local corTexto = ativo and V.texto or V.fraco
+            local transpFundo = ativo and 0.2 or 0.5
+            TweenService:Create(btn, TweenInfo.new(0.25), { BackgroundColor3 = corFundo, BackgroundTransparency = transpFundo }):Play()
+            if btn:FindFirstChild("Label") then
+                TweenService:Create(btn.Label, TweenInfo.new(0.25), { TextColor3 = corTexto }):Play()
+            end
+        end
+        for n, pag in pairs(paginas) do pag.Visible = (n == nome) end
+    end
+
+    local function criarAba(nome, ordem)
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(1, 0, 0, 36)
+        btn.Position = UDim2.new(0, 0, 0, (ordem - 1) * 42)
+        btn.BackgroundColor3 = V.card
+        btn.BackgroundTransparency = 0.5
+        btn.BorderSizePixel = 0
+        btn.Text = ""
+        btn.AutoButtonColor = false
+        btn.ZIndex = 6
+        btn.Parent = abasContainer
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+
+        local label = Instance.new("TextLabel")
+        label.Name = "Label"
+        label.Size = UDim2.new(1, 0, 1, 0)
+        label.BackgroundTransparency = 1
+        label.Text = nome
+        label.TextColor3 = V.fraco
+        label.Font = V.fonteBlack
+        label.TextSize = 10
+        label.ZIndex = 7
+        label.Parent = btn
+
+        btn.MouseEnter:Connect(function()
+            if abaAtiva ~= nome then
+                TweenService:Create(btn, TweenInfo.new(0.2), { BackgroundColor3 = V.cardHover, BackgroundTransparency = 0.3 }):Play()
+            end
+        end)
+        btn.MouseLeave:Connect(function()
+            if abaAtiva ~= nome then
+                TweenService:Create(btn, TweenInfo.new(0.2), { BackgroundColor3 = V.card, BackgroundTransparency = 0.5 }):Play()
+            end
+        end)
+        btn.MouseButton1Click:Connect(function() trocarAba(nome) end)
+
+        abas[nome] = btn
+        paginas[nome] = criarPagina(nome)
+    end
+
+    criarAba("MAIN", 1)
+    criarAba("AUTO STEAL", 2)
+    criarAba("STATUS", 3)
+
+    -- MAIN
+    local mainPage = paginas["MAIN"]
+
+    local gameCard = Instance.new("Frame")
+    gameCard.Size = UDim2.new(1, 0, 0, 80)
+    gameCard.BackgroundColor3 = V.card
+    gameCard.BackgroundTransparency = 0.3
+    gameCard.BorderSizePixel = 0
+    gameCard.ZIndex = 8
+    gameCard.Parent = mainPage
+    Instance.new("UICorner", gameCard).CornerRadius = UDim.new(0, 12)
+
+    local gameCardStroke = Instance.new("UIStroke")
+    gameCardStroke.Color = V.acento
+    gameCardStroke.Thickness = 1
+    gameCardStroke.Transparency = 0.4
+    gameCardStroke.Parent = gameCard
+
+    local gameIcon = Instance.new("ImageLabel")
+    gameIcon.Size = UDim2.fromOffset(60, 60)
+    gameIcon.Position = UDim2.new(0, 10, 0.5, -30)
+    gameIcon.BackgroundColor3 = V.acentoDark
+    gameIcon.BorderSizePixel = 0
+    gameIcon.ScaleType = Enum.ScaleType.Crop
+    gameIcon.ZIndex = 9
+    gameIcon.Parent = gameCard
+    Instance.new("UICorner", gameIcon).CornerRadius = UDim.new(0, 10)
+
+    _pcall(function() gameIcon.Image = gameIconUrl end)
+    task.delay(3, function()
+        _pcall(function()
+            if not gameIcon.IsLoaded then
+                gameIcon.Image = gameIconFallback
+            end
+        end)
+    end)
+
+    local gameName = Instance.new("TextLabel")
+    gameName.Size = UDim2.new(1, -90, 0, 20)
+    gameName.Position = UDim2.new(0, 80, 0, 20)
+    gameName.BackgroundTransparency = 1
+    gameName.Text = "Carregando..."
+    gameName.TextColor3 = V.texto
+    gameName.Font = V.fonteBlack
+    gameName.TextSize = 13
+    gameName.TextXAlignment = Enum.TextXAlignment.Left
+    gameName.TextTruncate = Enum.TextTruncate.AtEnd
+    gameName.ZIndex = 9
+    gameName.Parent = gameCard
+
+    local gameId = Instance.new("TextLabel")
+    gameId.Size = UDim2.new(1, -90, 0, 14)
+    gameId.Position = UDim2.new(0, 80, 0, 44)
+    gameId.BackgroundTransparency = 1
+    gameId.Text = "PlaceId: " .. tostring(game.PlaceId)
+    gameId.TextColor3 = V.fraco
+    gameId.Font = V.fonte
+    gameId.TextSize = 10
+    gameId.TextXAlignment = Enum.TextXAlignment.Left
+    gameId.ZIndex = 9
+    gameId.Parent = gameCard
+
+    task.spawn(function()
+        local ok, info = pcall(function()
+            return MarketplaceService:GetProductInfo(tostring(game.PlaceId))
+        end)
+        if ok and info and info.Name then
+            _pcall(function() gameName.Text = tostring(info.Name) end)
+        else
+            _pcall(function() gameName.Text = "Jogo Desconhecido" end)
+        end
+    end)
+
+    local playerCard = Instance.new("Frame")
+    playerCard.Size = UDim2.new(1, 0, 0, 130)
+    playerCard.Position = UDim2.new(0, 0, 0, 90)
+    playerCard.BackgroundColor3 = V.card
+    playerCard.BackgroundTransparency = 0.3
+    playerCard.BorderSizePixel = 0
+    playerCard.ZIndex = 8
+    playerCard.Parent = mainPage
+    Instance.new("UICorner", playerCard).CornerRadius = UDim.new(0, 12)
+
+    local playerCardStroke = Instance.new("UIStroke")
+    playerCardStroke.Color = V.acento
+    playerCardStroke.Thickness = 1
+    playerCardStroke.Transparency = 0.4
+    playerCardStroke.Parent = playerCard
+
+    local avatarFrame = Instance.new("Frame")
+    avatarFrame.Size = UDim2.fromOffset(80, 80)
+    avatarFrame.Position = UDim2.new(0, 16, 0.5, -40)
+    avatarFrame.BackgroundColor3 = V.acentoDark
+    avatarFrame.BorderSizePixel = 0
+    avatarFrame.ZIndex = 9
+    avatarFrame.Parent = playerCard
+    Instance.new("UICorner", avatarFrame).CornerRadius = UDim.new(1, 0)
+
+    local avatarImg = Instance.new("ImageLabel")
+    avatarImg.Size = UDim2.new(1, 0, 1, 0)
+    avatarImg.BackgroundTransparency = 1
+    avatarImg.ZIndex = 10
+    avatarImg.Parent = avatarFrame
+    Instance.new("UICorner", avatarImg).CornerRadius = UDim.new(1, 0)
+
+    _pcall(function()
+        avatarImg.Image = "rbxthumb://type=Avatar&id=" .. tostring(localPlayer.UserId) .. "&w=420&h=420"
+    end)
+    task.delay(3, function()
+        _pcall(function()
+            if not avatarImg.IsLoaded then
+                avatarImg.Image = "https://www.roblox.com/headshot-thumbnail/image?userId=" .. tostring(localPlayer.UserId) .. "&width=420&height=420&format=png"
+            end
+        end)
+    end)
+
+    local nomeLabel = Instance.new("TextLabel")
+    nomeLabel.Size = UDim2.new(1, -120, 0, 18)
+    nomeLabel.Position = UDim2.new(0, 110, 0, 14)
+    nomeLabel.BackgroundTransparency = 1
+    nomeLabel.Text = tostring(localPlayer.DisplayName or localPlayer.Name or "?")
+    nomeLabel.TextColor3 = V.texto
+    nomeLabel.Font = V.fonteBlack
+    nomeLabel.TextSize = 14
+    nomeLabel.TextXAlignment = Enum.TextXAlignment.Left
+    nomeLabel.ZIndex = 9
+    nomeLabel.Parent = playerCard
+
+    local idLabel = Instance.new("TextLabel")
+    idLabel.Size = UDim2.new(1, -120, 0, 14)
+    idLabel.Position = UDim2.new(0, 110, 0, 36)
+    idLabel.BackgroundTransparency = 1
+    idLabel.Text = "ID: " .. tostring(localPlayer.UserId)
+    idLabel.TextColor3 = V.fraco
+    idLabel.Font = V.fonte
+    idLabel.TextSize = 10
+    idLabel.TextXAlignment = Enum.TextXAlignment.Left
+    idLabel.ZIndex = 9
+    idLabel.Parent = playerCard
+
+    local idadeLabel = Instance.new("TextLabel")
+    idadeLabel.Size = UDim2.new(1, -120, 0, 14)
+    idadeLabel.Position = UDim2.new(0, 110, 0, 54)
+    idadeLabel.BackgroundTransparency = 1
+    idadeLabel.TextColor3 = V.fraco
+    idadeLabel.Font = V.fonte
+    idadeLabel.TextSize = 10
+    idadeLabel.TextXAlignment = Enum.TextXAlignment.Left
+    idadeLabel.ZIndex = 9
+    idadeLabel.Parent = playerCard
+    _pcall(function()
+        idadeLabel.Text = "Conta: " .. tostring(localPlayer.AccountAge or "?") .. " dias"
+    end)
+
+    local horaLabel = Instance.new("TextLabel")
+    horaLabel.Size = UDim2.new(1, -120, 0, 14)
+    horaLabel.Position = UDim2.new(0, 110, 0, 72)
+    horaLabel.BackgroundTransparency = 1
+    horaLabel.Text = "Hora: --:--:--"
+    horaLabel.TextColor3 = V.fraco
+    horaLabel.Font = V.fonte
+    horaLabel.TextSize = 10
+    horaLabel.TextXAlignment = Enum.TextXAlignment.Left
+    horaLabel.ZIndex = 9
+    horaLabel.Parent = playerCard
+
+    -- AUTO STEAL
+    local stealPage = paginas["AUTO STEAL"]
+
+    local valorLabel = Instance.new("TextLabel")
+    valorLabel.Size = UDim2.new(1, 0, 0, 12)
+    valorLabel.BackgroundTransparency = 1
+    valorLabel.Text = "Valor mínimo dos pets"
+    valorLabel.TextColor3 = V.fraco
+    valorLabel.Font = V.fonte
+    valorLabel.TextSize = 10
+    valorLabel.TextXAlignment = Enum.TextXAlignment.Left
+    valorLabel.ZIndex = 8
+    valorLabel.Parent = stealPage
+
+    local valorBox = Instance.new("Frame")
+    valorBox.Size = UDim2.new(1, 0, 0, 28)
+    valorBox.Position = UDim2.new(0, 0, 0, 14)
+    valorBox.BackgroundColor3 = V.card
+    valorBox.BackgroundTransparency = 0.4
+    valorBox.BorderSizePixel = 0
+    valorBox.ZIndex = 8
+    valorBox.Parent = stealPage
+    Instance.new("UICorner", valorBox).CornerRadius = UDim.new(0, 8)
+
+    local valorStroke = Instance.new("UIStroke")
+    valorStroke.Color = V.borda
+    valorStroke.Thickness = 1
+    valorStroke.Transparency = 0.5
+    valorStroke.Parent = valorBox
+
+    local valorTexto = Instance.new("TextLabel")
+    valorTexto.Size = UDim2.new(1, -70, 1, 0)
+    valorTexto.Position = UDim2.new(0, 10, 0, 0)
+    valorTexto.BackgroundTransparency = 1
+    valorTexto.Text = "$100.00M"
+    valorTexto.TextColor3 = V.texto
+    valorTexto.Font = V.fonteBold
+    valorTexto.TextSize = 11
+    valorTexto.TextXAlignment = Enum.TextXAlignment.Left
+    valorTexto.ZIndex = 9
+    valorTexto.Parent = valorBox
+
+    local valorMenos = Instance.new("TextButton")
+    valorMenos.Size = UDim2.fromOffset(26, 22)
+    valorMenos.Position = UDim2.new(1, -60, 0.5, -11)
+    valorMenos.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+    valorMenos.Text = "-"
+    valorMenos.TextColor3 = V.texto
+    valorMenos.Font = Enum.Font.GothamBold
+    valorMenos.TextSize = 14
+    valorMenos.AutoButtonColor = false
+    valorMenos.ZIndex = 9
+    valorMenos.Parent = valorBox
+    Instance.new("UICorner", valorMenos).CornerRadius = UDim.new(0, 6)
+
+    local valorMais = Instance.new("TextButton")
+    valorMais.Size = UDim2.fromOffset(26, 22)
+    valorMais.Position = UDim2.new(1, -30, 0.5, -11)
+    valorMais.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+    valorMais.Text = "+"
+    valorMais.TextColor3 = V.texto
+    valorMais.Font = Enum.Font.GothamBold
+    valorMais.TextSize = 14
+    valorMais.AutoButtonColor = false
+    valorMais.ZIndex = 9
+    valorMais.Parent = valorBox
+    Instance.new("UICorner", valorMais).CornerRadius = UDim.new(0, 6)
+
+    local raridadeLabel = Instance.new("TextLabel")
+    raridadeLabel.Size = UDim2.new(1, 0, 0, 12)
+    raridadeLabel.Position = UDim2.new(0, 0, 0, 50)
+    raridadeLabel.BackgroundTransparency = 1
+    raridadeLabel.Text = "Raridade mínima"
+    raridadeLabel.TextColor3 = V.fraco
+    raridadeLabel.Font = V.fonte
+    raridadeLabel.TextSize = 10
+    raridadeLabel.TextXAlignment = Enum.TextXAlignment.Left
+    raridadeLabel.ZIndex = 8
+    raridadeLabel.Parent = stealPage
+
+    local raridadeBox = Instance.new("Frame")
+    raridadeBox.Size = UDim2.new(1, 0, 0, 28)
+    raridadeBox.Position = UDim2.new(0, 0, 0, 64)
+    raridadeBox.BackgroundColor3 = V.card
+    raridadeBox.BackgroundTransparency = 0.4
+    raridadeBox.BorderSizePixel = 0
+    raridadeBox.ZIndex = 8
+    raridadeBox.Parent = stealPage
+    Instance.new("UICorner", raridadeBox).CornerRadius = UDim.new(0, 8)
+
+    local raridadeStroke = Instance.new("UIStroke")
+    raridadeStroke.Color = V.borda
+    raridadeStroke.Thickness = 1
+    raridadeStroke.Transparency = 0.5
+    raridadeStroke.Parent = raridadeBox
+
+    local raridadeTexto = Instance.new("TextLabel")
+    raridadeTexto.Size = UDim2.new(1, -70, 1, 0)
+    raridadeTexto.Position = UDim2.new(0, 10, 0, 0)
+    raridadeTexto.BackgroundTransparency = 1
+    raridadeTexto.Text = "Comum"
+    raridadeTexto.TextColor3 = V.texto
+    raridadeTexto.Font = V.fonteBold
+    raridadeTexto.TextSize = 11
+    raridadeTexto.TextXAlignment = Enum.TextXAlignment.Left
+    raridadeTexto.ZIndex = 9
+    raridadeTexto.Parent = raridadeBox
+
+    local raridadeMenos = Instance.new("TextButton")
+    raridadeMenos.Size = UDim2.fromOffset(26, 22)
+    raridadeMenos.Position = UDim2.new(1, -60, 0.5, -11)
+    raridadeMenos.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+    raridadeMenos.Text = "-"
+    raridadeMenos.TextColor3 = V.texto
+    raridadeMenos.Font = Enum.Font.GothamBold
+    raridadeMenos.TextSize = 14
+    raridadeMenos.AutoButtonColor = false
+    raridadeMenos.ZIndex = 9
+    raridadeMenos.Parent = raridadeBox
+    Instance.new("UICorner", raridadeMenos).CornerRadius = UDim.new(0, 6)
+
+    local raridadeMais = Instance.new("TextButton")
+    raridadeMais.Size = UDim2.fromOffset(26, 22)
+    raridadeMais.Position = UDim2.new(1, -30, 0.5, -11)
+    raridadeMais.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+    raridadeMais.Text = "+"
+    raridadeMais.TextColor3 = V.texto
+    raridadeMais.Font = Enum.Font.GothamBold
+    raridadeMais.TextSize = 14
+    raridadeMais.AutoButtonColor = false
+    raridadeMais.ZIndex = 9
+    raridadeMais.Parent = raridadeBox
+    Instance.new("UICorner", raridadeMais).CornerRadius = UDim.new(0, 6)
+
+    local petCard = Instance.new("Frame")
+    petCard.Size = UDim2.new(1, 0, 0, 74)
+    petCard.Position = UDim2.new(0, 0, 0, 104)
+    petCard.BackgroundColor3 = V.card
+    petCard.BackgroundTransparency = 0.3
+    petCard.BorderSizePixel = 0
+    petCard.ZIndex = 8
+    petCard.Parent = stealPage
+    Instance.new("UICorner", petCard).CornerRadius = UDim.new(0, 10)
+
+    local petStroke = Instance.new("UIStroke")
+    petStroke.Color = V.acento
+    petStroke.Thickness = 1
+    petStroke.Transparency = 0.4
+    petStroke.Parent = petCard
+
+    local petIcon = Instance.new("ImageLabel")
+    petIcon.Size = UDim2.fromOffset(52, 52)
+    petIcon.Position = UDim2.new(0, 10, 0, 11)
+    petIcon.BackgroundTransparency = 1
+    petIcon.Image = ""
+    petIcon.ScaleType = Enum.ScaleType.Fit
+    petIcon.ZIndex = 9
+    petIcon.Parent = petCard
+    Instance.new("UICorner", petIcon).CornerRadius = UDim.new(0, 8)
+
+    local petName = Instance.new("TextLabel")
+    petName.Size = UDim2.new(1, -80, 0, 16)
+    petName.Position = UDim2.new(0, 72, 0, 10)
+    petName.BackgroundTransparency = 1
+    petName.Text = "Melhor pet: ---"
+    petName.TextColor3 = V.texto
+    petName.Font = V.fonteBold
+    petName.TextSize = 11
+    petName.TextXAlignment = Enum.TextXAlignment.Left
+    petName.ZIndex = 9
+    petName.Parent = petCard
+
+    local petValue = Instance.new("TextLabel")
+    petValue.Size = UDim2.new(1, -80, 0, 14)
+    petValue.Position = UDim2.new(0, 72, 0, 28)
+    petValue.BackgroundTransparency = 1
+    petValue.Text = ""
+    petValue.TextColor3 = V.verde
+    petValue.Font = V.fonteBold
+    petValue.TextSize = 10
+    petValue.TextXAlignment = Enum.TextXAlignment.Left
+    petValue.ZIndex = 9
+    petValue.Parent = petCard
+
+    local petRarity = Instance.new("TextLabel")
+    petRarity.Size = UDim2.new(1, -80, 0, 12)
+    petRarity.Position = UDim2.new(0, 72, 0, 44)
+    petRarity.BackgroundTransparency = 1
+    petRarity.Text = ""
+    petRarity.TextColor3 = V.fraco
+    petRarity.Font = V.fonte
+    petRarity.TextSize = 10
+    petRarity.TextXAlignment = Enum.TextXAlignment.Left
+    petRarity.ZIndex = 9
+    petRarity.Parent = petCard
+
+    local stealBtn = Instance.new("TextButton")
+    stealBtn.Size = UDim2.new(1, 0, 0, 38)
+    stealBtn.Position = UDim2.new(0, 0, 0, 186)
+    stealBtn.BackgroundColor3 = V.card
+    stealBtn.BackgroundTransparency = 0.3
+    stealBtn.BorderSizePixel = 0
+    stealBtn.Text = ""
+    stealBtn.AutoButtonColor = false
+    stealBtn.ZIndex = 8
+    stealBtn.Parent = stealPage
+    Instance.new("UICorner", stealBtn).CornerRadius = UDim.new(0, 10)
+
+    local stealStroke = Instance.new("UIStroke")
+    stealStroke.Color = V.verde
+    stealStroke.Thickness = 1
+    stealStroke.Transparency = 0.2
+    stealStroke.Parent = stealBtn
+
+    local stealLabel = Instance.new("TextLabel")
+    stealLabel.Size = UDim2.new(1, -60, 1, 0)
+    stealLabel.Position = UDim2.new(0, 14, 0, 0)
+    stealLabel.BackgroundTransparency = 1
+    stealLabel.Text = "AUTO STEAL"
+    stealLabel.TextColor3 = V.texto
+    stealLabel.Font = V.fonteBlack
+    stealLabel.TextSize = 11
+    stealLabel.TextXAlignment = Enum.TextXAlignment.Left
+    stealLabel.ZIndex = 9
+    stealLabel.Parent = stealBtn
+
+    local stealToggle = Instance.new("Frame")
+    stealToggle.Size = UDim2.fromOffset(36, 20)
+    stealToggle.Position = UDim2.new(1, -50, 0.5, -10)
+    stealToggle.BackgroundColor3 = Color3.fromRGB(40, 40, 52)
+    stealToggle.BorderSizePixel = 0
+    stealToggle.ZIndex = 9
+    stealToggle.Parent = stealBtn
+    Instance.new("UICorner", stealToggle).CornerRadius = UDim.new(1, 0)
+
+    local stealKnob = Instance.new("Frame")
+    stealKnob.Size = UDim2.fromOffset(16, 16)
+    stealKnob.Position = UDim2.new(0, 2, 0.5, -8)
+    stealKnob.BackgroundColor3 = V.texto
+    stealKnob.BorderSizePixel = 0
+    stealKnob.ZIndex = 10
+    stealKnob.Parent = stealToggle
+    Instance.new("UICorner", stealKnob).CornerRadius = UDim.new(1, 0)
+
+    local statusPage = paginas["STATUS"]
+    local statusTitulo = Instance.new("TextLabel")
+    statusTitulo.Size = UDim2.new(1, 0, 0, 20)
+    statusTitulo.BackgroundTransparency = 1
+    statusTitulo.Text = "STATUS"
+    statusTitulo.TextColor3 = V.texto
+    statusTitulo.Font = V.fonteBlack
+    statusTitulo.TextSize = 13
+    statusTitulo.TextXAlignment = Enum.TextXAlignment.Left
+    statusTitulo.ZIndex = 8
+    statusTitulo.Parent = statusPage
+
+    trocarAba("MAIN")
+
+    task.spawn(function()
+        while gui.Parent do
+            _pcall(function()
+                local hora = os.date("*t")
+                horaLabel.Text = string.format("Hora: %02d:%02d:%02d", hora.hour, hora.min, hora.sec)
+            end)
+            task.wait(1)
+        end
+    end)
+
+    local valorMinimo = 100_000_000
+    local valorPasso = 10_000_000
+
+    local function formatarValor(v)
+        if v >= 1e12 then return string.format("$%.2fT", v / 1e12) end
+        if v >= 1e9 then return string.format("$%.2fB", v / 1e9) end
+        if v >= 1e6 then return string.format("$%.2fM", v / 1e6) end
+        if v >= 1e3 then return string.format("$%.2fK", v / 1e3) end
+        return "$" .. tostring(v)
+    end
+
+    local function atualizarValor()
+        valorTexto.Text = formatarValor(valorMinimo)
+    end
+
+    valorMenos.MouseButton1Click:Connect(function()
+        valorMinimo = math.max(0, valorMinimo - valorPasso)
+        atualizarValor()
+    end)
+    valorMais.MouseButton1Click:Connect(function()
+        valorMinimo = valorMinimo + valorPasso
+        atualizarValor()
+    end)
+
+    local raridadeMinima = 1
+
+    local function atualizarRaridade()
+        raridadeTexto.Text = RARITY_NAMES[raridadeMinima] or "Comum"
+        raridadeTexto.TextColor3 = RARITY_COLORS[raridadeMinima] or V.texto
+    end
+
+    raridadeMenos.MouseButton1Click:Connect(function()
+        raridadeMinima = math.max(1, raridadeMinima - 1)
+        atualizarRaridade()
+    end)
+    raridadeMais.MouseButton1Click:Connect(function()
+        raridadeMinima = math.min(#RARITY_NAMES, raridadeMinima + 1)
+        atualizarRaridade()
+    end)
+
+    atualizarValor()
+    atualizarRaridade()
+
+    local autoStealAtivo = false
+    local melhorPetUid = nil
+
+    local function atualizarMelhorPet()
+        local lista = snapshot()
+        local melhor, melhorValor = nil, 0
+        for _, record in ipairs(lista) do
+            local info = describe(record)
+            if info.Value >= valorMinimo and info.Rarity >= raridadeMinima then
+                if info.Value > melhorValor then
+                    melhorValor = info.Value
+                    melhor = info
+                end
+            end
+        end
+        if melhor then
+            melhorPetUid = melhor.Uid
+            petIcon.Image = melhor.Icon ~= "" and melhor.Icon or "rbxassetid://0"
+            petIcon.Visible = true
+            petName.Text = melhor.Name
+            petName.TextColor3 = V.texto
+            petValue.Text = money(melhor.Value)
+            petValue.TextColor3 = V.verde
+            petRarity.Text = "Raridade: " .. (RARITY_NAMES[melhor.Rarity] or "?")
+            petRarity.TextColor3 = RARITY_COLORS[melhor.Rarity] or V.fraco
+        else
+            melhorPetUid = nil
+            petIcon.Visible = false
+            petName.Text = "Não encontrado"
+            petName.TextColor3 = V.vermelho
+            petValue.Text = "Valor mínimo: " .. formatarValor(valorMinimo)
+            petValue.TextColor3 = V.fraco
+            petRarity.Text = "Raridade mínima: " .. (RARITY_NAMES[raridadeMinima] or "?")
+            petRarity.TextColor3 = V.fraco
+        end
+    end
+
+    stealBtn.MouseButton1Click:Connect(function()
+        autoStealAtivo = not autoStealAtivo
+        if autoStealAtivo then
+            TweenService:Create(stealToggle, TweenInfo.new(0.3, Enum.EasingStyle.Quart), { BackgroundColor3 = V.verde }):Play()
+            TweenService:Create(stealKnob, TweenInfo.new(0.3, Enum.EasingStyle.Quart), { Position = UDim2.new(1, -18, 0.5, -8) }):Play()
+            task.spawn(function()
+                while autoStealAtivo do
+                    atualizarMelhorPet()
+                    if melhorPetUid and not state.Busy then stealAndDeliver(melhorPetUid) end
+                    task.wait(1)
+                end
+            end)
+        else
+            TweenService:Create(stealToggle, TweenInfo.new(0.3, Enum.EasingStyle.Quart), { BackgroundColor3 = Color3.fromRGB(40,40,52) }):Play()
+            TweenService:Create(stealKnob, TweenInfo.new(0.3, Enum.EasingStyle.Quart), { Position = UDim2.new(0, 2, 0.5, -8) }):Play()
+            state.Cancel = true
+        end
+    end)
+
+    task.spawn(function()
+        while gui.Parent do
+            pcall(atualizarMelhorPet)
+            task.wait(3)
+        end
+    end)
+
+    main.Position = UDim2.new(0, 14, 0.5, 60)
+    main.BackgroundTransparency = 1
+    TweenService:Create(main, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+        Position = UDim2.new(0, 14, 0.5, -160)
+    }):Play()
+    TweenService:Create(main, TweenInfo.new(0.4), { BackgroundTransparency = V.fundoAlpha }):Play()
+
+    return gui
+end
+
+criarUI()
+shieldStart()
+print("["..HUB.."] ✅ Cachorrin Hub carregado")
