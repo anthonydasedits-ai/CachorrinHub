@@ -25,7 +25,7 @@ local _warn = warn or print
 -- ══════════════════════════════════════
 --  🖼️ IMAGENS
 -- ══════════════════════════════════════
-local IMG_LOGO  = "rbxassetid://95184527630499"
+local IMG_LOGO  =  "rbxassetid://95184527630499"
 local IMG_FUNDO = "rbxassetid://95184527630499"
 
 local gameIconUrl = "rbxthumb://type=GameIcon&id=" .. tostring(game.PlaceId) .. "&w=150&h=150"
@@ -891,10 +891,10 @@ local RARITY_NAMES = { "Comum", "Incomum", "Raro", "Épico", "Lendário", "Míti
 --  UI
 -- ══════════════════════════════════════
 local function criarUI()
-    if CoreGui:FindFirstChild("CACHORRIN_UI") then CoreGui.CACHORRIN_UI:Destroy() end
+    if CoreGui:FindFirstChild("GHOMEGA_UI") then CoreGui.GHOMEGA_UI:Destroy() end
 
     local gui = Instance.new("ScreenGui")
-    gui.Name = "CACHORRIN_UI"
+    gui.Name = "GHOMEGA_UI"
     gui.ResetOnSpawn = false
     gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     gui.IgnoreGuiInset = true
@@ -973,7 +973,7 @@ local function criarUI()
     titulo.Size = UDim2.new(1, -90, 0, 15)
     titulo.Position = UDim2.new(0, 56, 0, 12)
     titulo.BackgroundTransparency = 1
-    titulo.Text = "CACHORRIN HUB"
+    titulo.Text = "GHOMEGA HUB"
     titulo.TextColor3 = V.texto
     titulo.Font = V.fonteBlack
     titulo.TextSize = 11
@@ -985,7 +985,7 @@ local function criarUI()
     sub.Size = UDim2.new(1, -90, 0, 11)
     sub.Position = UDim2.new(0, 56, 0, 29)
     sub.BackgroundTransparency = 1
-    sub.Text = "Cachorrin Hub"
+    sub.Text = "Ghomega Hub v2"
     sub.TextColor3 = V.acentoBright
     sub.Font = V.fonte
     sub.TextSize = 9
@@ -1674,4 +1674,4 @@ end
 
 criarUI()
 shieldStart()
-print("["..HUB.."] ✅ Cachorrin Hub carregado")
+print("["..HUB.."] ✅ CACHORRIN HUB | Cachorrin Hub v2 carregado")
